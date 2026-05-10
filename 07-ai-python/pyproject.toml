@@ -1,0 +1,22 @@
+[project]
+name = "driver-safety-ai"
+version = "0.1.0"
+description = "버스 운전기사 위험상황 인지 시스템 - AI 엔진"
+authors = [
+    {name = "정우창",email = "woochang4862@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mediapipe (>=0.10.30)",
+    "opencv-python (>=4.10)",
+    "numpy (>=1.24,<2.0)"
+]
+
+
+[tool.poetry]
+package-mode = false
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
