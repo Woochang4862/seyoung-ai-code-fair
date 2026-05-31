@@ -48,6 +48,12 @@ class _DetectionScreenState extends State<DetectionScreen> {
   bool _gpsGating = false;
   SpeedService? _speedService;
 
+  // ── 기사 얼굴 선택 (뒤 승객 구분) ────────────────────────────
+  // 화면 면적의 이 비율 미만으로 작은 얼굴은 '멀리 있는 승객'으로 보고
+  // 기사로 인정하지 않는다. (거치 거리에 따라 조정 필요 — 디버그 표시 참고)
+  static const double _minDriverAreaRatio = 0.04;
+  double _driverSizeRatio = 0.0; // 현재 기사 후보 얼굴의 화면 대비 면적(디버그용)
+
   // 마지막 판정 결과 (UI 갱신용)
   DriverState _state = DriverState.normal;
 
@@ -146,6 +152,40 @@ class _DetectionScreenState extends State<DetectionScreen> {
     await _cameraController!.startImageStream(_onCameraFrame);
   }
 
+  // 여러 얼굴 중 '기사' 얼굴을 고른다.
+  //   - 기사 = 카메라(거치 폰)에 가장 가까운 사람 = 화면에서 가장 큰 얼굴
+  //   - 뒤 승객은 멀어서 작게 잡힌다.
+  //   - 가장 큰 얼굴조차 화면 면적의 _minDriverAreaRatio 미만이면
+  //     '기사 없음(null)'으로 본다. → 기사가 쓰러져 사라지고 뒤 승객만
+  //     보이는 경우, 작은 승객은 기사로 인정되지 않아 쓰러짐 감지가 작동.
+  //   - 면적으로 비교하므로 카메라 회전(가로/세로)과 무관하다.
+  Face? _pickDriverFace(List<Face> faces, int imageWidth, int imageHeight) {
+    if (faces.isEmpty) {
+      _driverSizeRatio = 0.0;
+      return null;
+    }
+
+    // 면적이 가장 큰 얼굴 찾기
+    Face biggest = faces.first;
+    double biggestArea =
+        biggest.boundingBox.width * biggest.boundingBox.height;
+    for (final f in faces.skip(1)) {
+      final area = f.boundingBox.width * f.boundingBox.height;
+      if (area > biggestArea) {
+        biggest = f;
+        biggestArea = area;
+      }
+    }
+
+    // 화면 대비 얼굴 면적 비율
+    final imageArea = (imageWidth * imageHeight).toDouble();
+    _driverSizeRatio = imageArea > 0 ? biggestArea / imageArea : 0.0;
+
+    // 기사라고 보기엔 너무 작으면(멀리 있는 승객뿐) 기사 없음 처리
+    if (_driverSizeRatio < _minDriverAreaRatio) return null;
+    return biggest;
+  }
+
   // 카메라가 새 프레임을 줄 때마다 호출 (≈30fps)
   Future<void> _onCameraFrame(CameraImage image) async {
     if (_isProcessing) return; // 이전 프레임이 아직 처리 중이면 스킵
@@ -156,7 +196,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
       if (input == null) return;
 
       final faces = await _faceDetector.processImage(input);
-      final face = faces.isEmpty ? null : faces.first;
+      // 뒤 승객이 아니라 '기사' 얼굴만 고른다 (가장 큰 얼굴 + 최소 크기).
+      // 기사로 볼 만한 얼굴이 없으면 null → 기존 '얼굴 사라짐 → 쓰러짐' 작동.
+      final face = _pickDriverFace(faces, image.width, image.height);
 
       // 알고리즘 본체에 위임 → 새 상태 반환
       var newState = _detector.update(face);
@@ -386,7 +428,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
               child: Text(
                 '얼굴 ${_detector.lastFaceDetected ? "✓" : "✗"}   '
                 'EAR ${_detector.lastEar.toStringAsFixed(2)}   '
-                '기울기 ${_detector.lastTiltDeg.toStringAsFixed(1)}°',
+                '기울기 ${_detector.lastTiltDeg.toStringAsFixed(1)}°   '
+                '크기 ${(_driverSizeRatio * 100).toStringAsFixed(1)}%',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 14,
