@@ -34,13 +34,17 @@ class DrowsyDetector {
   final double tiltThresholdDeg;   // TILT_THRESHOLD    = 30.0
   final double missingSeconds;     // MISSING_SECONDS   = 2.0
   final double dropRatio;          // DROP_RATIO        = 0.25
+  // 눈 윤곽(EAR)을 못 쓸 때 대체로 쓰는 '눈 뜸 확률' 임계값.
+  // ML Kit classification 값(0=감음 ~ 1=뜸)이 이 값 미만이면 감은 것으로 본다.
+  final double eyeOpenThreshold;   // EYE_OPEN_THRESHOLD = 0.4
 
   DrowsyDetector({
-    this.earThreshold     = 0.25,
-    this.drowsySeconds    = 3.0,
-    this.tiltThresholdDeg = 30.0,
-    this.missingSeconds   = 2.0,
-    this.dropRatio        = 0.25,
+    this.earThreshold      = 0.25,
+    this.drowsySeconds     = 3.0,
+    this.tiltThresholdDeg  = 30.0,
+    this.missingSeconds    = 2.0,
+    this.dropRatio         = 0.25,
+    this.eyeOpenThreshold  = 0.4,
   });
 
   // ── 내부 상태 (파이썬의 메인 루프 변수와 1:1 대응) ─────────────
@@ -52,6 +56,8 @@ class DrowsyDetector {
   double lastEar = 1.0;
   double lastTiltDeg = 0.0;
   bool   lastFaceDetected = false;
+  double? lastEyeOpenProb;  // 마지막 눈 뜸 확률(없으면 null)
+  bool   lastUsedProb = false; // 이번 프레임에 EAR 대신 확률을 썼는지(디버그용)
 
   // ── 두 점 사이 유클리드 거리 (파이썬 distance 함수) ───────────
   double _dist(Point<int> a, Point<int> b) {
@@ -140,12 +146,35 @@ class DrowsyDetector {
     // 얼굴이 다시 보이면 사라짐 타이머 리셋
     _faceMissingStart = null;
 
-    // EAR 계산 (양쪽 눈 평균)
+    // ── 눈 감김 판단 ──────────────────────────────────────────────
+    // 1순위: 눈 윤곽으로 EAR 계산 (정밀, 보정값과 직접 비교)
+    // 2순위: 윤곽이 없을 때 → ML Kit '눈 뜸 확률'로 대체
+    //   얼굴이 여러 개면 ML Kit 은 가장 두드러진 얼굴 하나에만 윤곽을 주므로,
+    //   기사 얼굴의 윤곽이 빠져 EAR 이 1.0(눈 뜸)으로 잘못 나올 수 있다.
+    //   이때 얼굴 수와 무관하게 안정적인 '눈 뜸 확률'로 판단해 졸음을 놓치지 않는다.
     final leftContour  = face.contours[FaceContourType.leftEye]?.points ?? [];
     final rightContour = face.contours[FaceContourType.rightEye]?.points ?? [];
+    final contoursOk = leftContour.length >= 4 && rightContour.length >= 4;
     final earL = _calculateEar(leftContour);
     final earR = _calculateEar(rightContour);
     lastEar = (earL + earR) / 2.0;
+
+    // 눈 뜸 확률 (classification) — 양쪽 평균 (0=감음 ~ 1=뜸)
+    final pL = face.leftEyeOpenProbability;
+    final pR = face.rightEyeOpenProbability;
+    lastEyeOpenProb = (pL != null && pR != null) ? (pL + pR) / 2.0 : null;
+
+    bool eyesClosed;
+    if (contoursOk) {
+      eyesClosed = lastEar < earThreshold;             // EAR 방식(정밀)
+      lastUsedProb = false;
+    } else if (lastEyeOpenProb != null) {
+      eyesClosed = lastEyeOpenProb! < eyeOpenThreshold; // 확률 대체
+      lastUsedProb = true;
+    } else {
+      eyesClosed = false; // 둘 다 없으면 판단 보류
+      lastUsedProb = false;
+    }
 
     // 고개 기울기 (Z축 회전 = 좌우 기울기, 파이썬 face_tilt_angle 대응)
     lastTiltDeg = face.headEulerAngleZ ?? 0.0;
@@ -174,8 +203,8 @@ class DrowsyDetector {
       return DriverState.collapsed;
     }
 
-    // 3단계: 졸음 감지
-    if (lastEar < earThreshold) {
+    // 3단계: 졸음 감지 (EAR 또는 눈 뜸 확률로 판단)
+    if (eyesClosed) {
       _eyeClosedStart ??= now;
       final closedMs = now.difference(_eyeClosedStart!).inMilliseconds;
       if (closedMs >= drowsySeconds * 1000) {

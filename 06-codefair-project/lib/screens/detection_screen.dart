@@ -71,6 +71,13 @@ class _DetectionScreenState extends State<DetectionScreen> {
         enableContours: true,
         enableClassification: true,
         performanceMode: FaceDetectorMode.fast,
+        // 작은 얼굴(먼 승객·노이즈)을 ML Kit 단계에서 걸러낸다.
+        //   - ML Kit 은 '가장 두드러진 얼굴 1개'에만 눈 윤곽을 계산한다.
+        //     주변에 작은 얼굴이 끼면 기사 얼굴의 윤곽이 빠져 EAR 이 1.0(눈 뜸)
+        //     으로 잘못 나와 졸음 감지가 안 되는 문제가 있었다.
+        //   - 얼굴 너비가 화면 너비의 15% 이상인 가까운 얼굴(=기사)만 잡으면
+        //     기사 얼굴이 거의 단독으로 잡혀 윤곽이 안정적으로 나온다.
+        minFaceSize: 0.15,
       ),
     );
     _initialize();
@@ -428,6 +435,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
               child: Text(
                 '얼굴 ${_detector.lastFaceDetected ? "✓" : "✗"}   '
                 'EAR ${_detector.lastEar.toStringAsFixed(2)}   '
+                '눈뜸 ${_detector.lastEyeOpenProb == null ? "-" : _detector.lastEyeOpenProb!.toStringAsFixed(2)}'
+                '${_detector.lastUsedProb ? "*" : ""}   '
                 '기울기 ${_detector.lastTiltDeg.toStringAsFixed(1)}°   '
                 '크기 ${(_driverSizeRatio * 100).toStringAsFixed(1)}%',
                 style: const TextStyle(
