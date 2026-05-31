@@ -17,6 +17,7 @@
 //   - stop()   : 스트림 해제
 
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:geolocator/geolocator.dart';
 
 class SpeedService {
@@ -30,8 +31,14 @@ class SpeedService {
 
   StreamSubscription<Position>? _sub;
 
+  // 멈춰 있을 때 GPS 가 미세하게 떨려서 1~3km/h 가짜 속도가 잡힌다.
+  // 이 값(km/h) 미만은 '정지(0)'로 본다. (정지 중 속도가 들썩이는 것 방지)
+  static const double _noiseFloorKmh = 2.0;
+  // 지수이동평균(EMA)용 — 한 번 튄 값이 그대로 표시되지 않도록 부드럽게.
+  double? _smoothedKmh;
+
   // ── 외부에서 읽는 상태 ────────────────────────────────────────
-  double speedKmh = 0.0;      // 가장 최근 속도(km/h)
+  double speedKmh = 0.0;      // 가장 최근 속도(km/h, 보정 후)
   bool available = false;     // GPS 사용 가능(권한 OK·신호 수신) 여부
   String status = 'GPS 준비 중...';
   DateTime? lastUpdate;       // 마지막으로 위치를 받은 시각 (신호 생존 확인용)
@@ -69,14 +76,21 @@ class SpeedService {
     available = true;
     status = 'GPS 작동 중';
     _sub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 0, // 멈춰 있어도 속도 갱신을 받기 위해 0
-      ),
+      locationSettings: _buildSettings(),
     ).listen((pos) {
       // position.speed 는 m/s. 음수(미측정)면 0 으로 처리.
       final mps = pos.speed.isNaN || pos.speed < 0 ? 0.0 : pos.speed;
-      speedKmh = mps * 3.6;
+      var kmh = mps * 3.6;
+
+      // (1) 지수이동평균으로 튀는 값 완화 (이전값 60% + 새값 40%)
+      _smoothedKmh =
+          _smoothedKmh == null ? kmh : (_smoothedKmh! * 0.6 + kmh * 0.4);
+      kmh = _smoothedKmh!;
+
+      // (2) 노이즈 바닥값: 아주 느리면 정지로 본다 (멈춰있을 때 떨림 제거)
+      if (kmh < _noiseFloorKmh) kmh = 0.0;
+
+      speedKmh = kmh;
       lastUpdate = DateTime.now(); // 방금 신호를 받음
       onUpdate?.call();
     }, onError: (_) {
@@ -88,9 +102,36 @@ class SpeedService {
     onUpdate?.call();
   }
 
+  // 플랫폼별 위치 설정.
+  //   - Android: intervalDuration 1초 → 멈춰 있어도 1초마다 갱신 요청
+  //   - iOS: activityType 자동차내비 + 자동 일시정지 끔 → 정차 중에도 계속 갱신
+  // 이렇게 해야 "5초마다 한 번"처럼 띄엄띄엄 오는 문제를 줄일 수 있다.
+  LocationSettings _buildSettings() {
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+        intervalDuration: const Duration(seconds: 1),
+      );
+    }
+    if (Platform.isIOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+        activityType: ActivityType.automotiveNavigation,
+        pauseLocationUpdatesAutomatically: false,
+      );
+    }
+    return const LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 0,
+    );
+  }
+
   // ── 정지 ──────────────────────────────────────────────────────
   Future<void> stop() async {
     await _sub?.cancel();
     _sub = null;
+    _smoothedKmh = null; // 다음에 다시 시작할 때 평활값 초기화
   }
 }

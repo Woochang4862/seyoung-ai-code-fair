@@ -43,7 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _threshold = t;
       _soundOn = s;
       _gpsGating = g;
-      _stationarySpeed = sp;
+      _stationarySpeed = sp.clamp(3.0, 20.0); // 슬라이더 범위 밖 저장값 보호
       _loading = false;
     });
     // GPS 기능이 켜져 있으면 라이브 속도 측정을 바로 시작
@@ -197,9 +197,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             Slider(
               value: _stationarySpeed,
-              min: 1,
+              min: 3, // 2km/h 미만은 떨림으로 0 처리되므로 3부터 의미 있음
               max: 20,
-              divisions: 19,
+              divisions: 17,
               label: '${_stationarySpeed.toStringAsFixed(0)} km/h',
               onChanged: (v) => setState(() => _stationarySpeed = v),
               onChangeEnd: (v) {
@@ -259,8 +259,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     // '마지막 갱신: N초 전' — 지금 값이 살아있는지(신호가 계속 오는지) 확인용.
-    // GPS 는 보통 1초에 한 번 갱신되므로, 숫자가 0~1을 오가면 정상.
-    // 5초 넘게 안 오면 신호가 끊겼을 가능성이 높다.
+    // 야외에서 GPS 가 정상이면 보통 1~2초마다 갱신된다. 실내·약한 신호에선
+    // 몇 초씩 띄엄띄엄 올 수 있어, 10초 넘게 안 와야 '끊김'으로 본다.
     String? freshness;
     Color freshColor = Colors.grey;
     if (svc != null && svc.available) {
@@ -270,10 +270,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         freshColor = Colors.orange;
       } else {
         final sec = DateTime.now().difference(last).inSeconds;
-        if (sec <= 1) {
+        if (sec <= 2) {
           freshness = '마지막 갱신: 방금 전';
           freshColor = Colors.green;
-        } else if (sec <= 5) {
+        } else if (sec <= 10) {
           freshness = '마지막 갱신: $sec초 전';
           freshColor = Colors.grey;
         } else {
