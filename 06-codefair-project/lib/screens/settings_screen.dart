@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/speed_service.dart';
 import '../services/storage.dart';
 import 'calibration_screen.dart';
 
@@ -17,6 +18,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // 실험 기능(experimental-feature) 설정값
   bool _gpsGating = false;
   double _stationarySpeed = 5.0;
+
+  // GPS 동작 확인용 라이브 속도 측정기 (GPS 토글이 켜져 있을 때만 동작)
+  SpeedService? _speedTest;
 
   @override
   void initState() {
@@ -37,6 +41,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _stationarySpeed = sp;
       _loading = false;
     });
+    // GPS 기능이 켜져 있으면 라이브 속도 측정을 바로 시작
+    if (_gpsGating) _startSpeedTest();
+  }
+
+  // 라이브 속도 측정 시작 — 화면에 현재 속도를 실시간으로 보여줘서
+  // GPS 가 잘 동작하는지(권한·신호·속도) 바로 확인할 수 있다.
+  Future<void> _startSpeedTest() async {
+    if (_speedTest != null) return;
+    final svc = SpeedService(
+      stationarySpeedKmh: _stationarySpeed,
+      onUpdate: () {
+        if (mounted) setState(() {});
+      },
+    );
+    _speedTest = svc;
+    await svc.start();
+  }
+
+  Future<void> _stopSpeedTest() async {
+    await _speedTest?.stop();
+    _speedTest = null;
+  }
+
+  @override
+  void dispose() {
+    _speedTest?.stop();
+    super.dispose();
   }
 
   // 자동 보정 화면을 열고, 돌아오면 새 임계값을 다시 읽어 슬라이더에 반영
@@ -136,6 +167,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) async {
               setState(() => _gpsGating = v);
               await Storage.saveGpsGating(v);
+              // 토글에 맞춰 라이브 속도 측정 시작/정지
+              if (v) {
+                await _startSpeedTest();
+              } else {
+                await _stopSpeedTest();
+              }
             },
           ),
           if (_gpsGating) ...[
@@ -153,8 +190,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               divisions: 19,
               label: '${_stationarySpeed.toStringAsFixed(0)} km/h',
               onChanged: (v) => setState(() => _stationarySpeed = v),
-              onChangeEnd: (v) => Storage.saveStationarySpeed(v),
+              onChangeEnd: (v) {
+                Storage.saveStationarySpeed(v);
+                // 라이브 측정기의 정지 기준도 같이 갱신 → 아래 판정에 즉시 반영
+                _speedTest?.stationarySpeedKmh = v;
+              },
             ),
+            // ── GPS 동작 확인용 라이브 속도 표시 ─────────────────
+            _buildSpeedTestPanel(),
           ],
           const Divider(),
           const Padding(
@@ -170,6 +213,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: Text('버전 1.0.0 · 한국코드페어 출품작'),
           ),
         ],
+      ),
+    );
+  }
+
+  // GPS 동작 확인용 라이브 속도 패널.
+  //   - 권한/신호 상태와 현재 속도(km/h)를 실시간으로 보여준다.
+  //   - 지금 기준으로 '정지/주행' 어느 쪽으로 판정되는지도 표시.
+  //   → 폰을 들고 걷거나 차로 움직이면 속도가 올라가는지 바로 확인 가능.
+  Widget _buildSpeedTestPanel() {
+    final svc = _speedTest;
+
+    late final Color color;
+    late final IconData icon;
+    late final String big;
+    late final String sub;
+
+    if (svc == null || !svc.available) {
+      color = Colors.grey;
+      icon = Icons.gps_off;
+      big = '— km/h';
+      sub = svc?.status ?? 'GPS 준비 중...';
+    } else if (svc.isMoving) {
+      color = Colors.blue;
+      icon = Icons.directions_bus;
+      big = '${svc.speedKmh.toStringAsFixed(1)} km/h';
+      sub = '주행 중으로 판정 → 졸음 감지 ON';
+    } else {
+      color = Colors.orange;
+      icon = Icons.pause_circle_filled;
+      big = '${svc.speedKmh.toStringAsFixed(1)} km/h';
+      sub = '정지로 판정 → 감지 일시정지';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          border: Border.all(color: color.withValues(alpha: 0.5)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 40),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '현재 속도 (실시간)',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    big,
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(sub, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
