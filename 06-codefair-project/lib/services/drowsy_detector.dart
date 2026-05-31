@@ -157,9 +157,13 @@ class DrowsyDetector {
     final faceY = box.height > 0 ? box.center.dy / box.height : 0.0;
 
     // 2단계: 쓰러짐 감지 (3가지 중 하나라도 해당)
-    //   (1) 한 프레임 사이 Y 좌표가 얼굴 높이의 dropRatio 만큼 이동
-    //       → 갑자기 앞/아래로 쓰러짐 (DROP_RATIO = 0.25)
-    if (_prevFaceY != null && (faceY - _prevFaceY!).abs() > dropRatio) {
+    //   (1) 한 프레임 사이 얼굴이 '아래로' dropRatio 만큼 떨어짐
+    //       → 앞으로 고꾸라짐 (DROP_RATIO = 0.25)
+    //   화면 좌표는 아래로 갈수록 y가 커지므로, (현재 - 직전)이 양수면
+    //   얼굴이 아래로 내려간 것이다. 위로 올라가는 움직임(음수)은 무시한다.
+    //   → 얼굴을 위아래로 흔드는 정도로는 발동하지 않고, 실제로 푹 수그릴
+    //     때만 잡는다.
+    if (_prevFaceY != null && (faceY - _prevFaceY!) > dropRatio) {
       _prevFaceY = faceY;
       return DriverState.collapsed;
     }
