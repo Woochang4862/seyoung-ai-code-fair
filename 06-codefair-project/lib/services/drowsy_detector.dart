@@ -164,17 +164,14 @@ class DrowsyDetector {
     final pR = face.rightEyeOpenProbability;
     lastEyeOpenProb = (pL != null && pR != null) ? (pL + pR) / 2.0 : null;
 
-    bool eyesClosed;
-    if (contoursOk) {
-      eyesClosed = lastEar < earThreshold;             // EAR 방식(정밀)
-      lastUsedProb = false;
-    } else if (lastEyeOpenProb != null) {
-      eyesClosed = lastEyeOpenProb! < eyeOpenThreshold; // 확률 대체
-      lastUsedProb = true;
-    } else {
-      eyesClosed = false; // 둘 다 없으면 판단 보류
-      lastUsedProb = false;
-    }
+    // 두 신호를 OR 로 결합 — 하나라도 '감음'이면 감은 것으로 본다.
+    //   EAR 은 사람/조명/얼굴 수에 따라 뜸·감음이 겹쳐 애매할 때가 있지만,
+    //   눈 뜸 확률은 0(감음)~1(뜸)로 또렷이 갈린다. 둘을 OR 로 합치면
+    //   EAR 이 애매한 프레임에서도 확률이 잡아줘서 판정이 풀리지 않는다.
+    final earClosed  = contoursOk && lastEar < earThreshold;
+    final probClosed = lastEyeOpenProb != null && lastEyeOpenProb! < eyeOpenThreshold;
+    final eyesClosed = earClosed || probClosed;
+    lastUsedProb = probClosed && !earClosed; // EAR 이 놓친 걸 확률이 잡은 경우
 
     // 고개 기울기 (Z축 회전 = 좌우 기울기, 파이썬 face_tilt_angle 대응)
     lastTiltDeg = face.headEulerAngleZ ?? 0.0;
