@@ -8,6 +8,7 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../services/drowsy_detector.dart';
+import '../services/speed_service.dart';
 import '../services/storage.dart';
 import '../utils/face_image_converter.dart';
 
@@ -41,6 +42,11 @@ class _DetectionScreenState extends State<DetectionScreen> {
 
   bool _soundOn = true;
 
+  // ── 실험 기능: GPS 정지 게이팅 ───────────────────────────────
+  // 켜져 있고 버스가 멈춰 있으면(정류장·신호) 졸음 경고를 울리지 않는다.
+  bool _gpsGating = false;
+  SpeedService? _speedService;
+
   // 마지막 판정 결과 (UI 갱신용)
   DriverState _state = DriverState.normal;
 
@@ -73,13 +79,27 @@ class _DetectionScreenState extends State<DetectionScreen> {
       ),
     ));
 
-    // 1) 저장된 설정 불러오기 (민감도/소리)
+    // 1) 저장된 설정 불러오기 (민감도/소리/GPS)
     final threshold = await Storage.loadThreshold();
     _soundOn = await Storage.loadSoundOn();
+    _gpsGating = await Storage.loadGpsGating();
 
     // 파이썬 18_state_machine.py 의 임계값을 그대로 사용.
     // 단 EAR_THRESHOLD 만 사용자 설정값(슬라이더)을 반영한다.
     _detector = DrowsyDetector(earThreshold: threshold);
+
+    // 1-1) 실험 기능: GPS 정지 게이팅이 켜져 있으면 속도 모니터 시작
+    if (_gpsGating) {
+      final stationarySpeed = await Storage.loadStationarySpeed();
+      _speedService = SpeedService(
+        stationarySpeedKmh: stationarySpeed,
+        onUpdate: () {
+          // 정지→출발 등 속도 상태가 바뀔 때 화면(속도 배지)을 갱신
+          if (mounted) setState(() {});
+        },
+      );
+      await _speedService!.start();
+    }
 
     // 2) 카메라 권한 요청
     final status = await Permission.camera.request();
@@ -135,7 +155,18 @@ class _DetectionScreenState extends State<DetectionScreen> {
       final face = faces.isEmpty ? null : faces.first;
 
       // 알고리즘 본체에 위임 → 새 상태 반환
-      final newState = _detector.update(face);
+      var newState = _detector.update(face);
+
+      // 실험 기능: GPS 정지 게이팅 ────────────────────────────────
+      // 버스가 멈춰 있으면(정류장·신호 대기) 졸음/위험 판정을 무시하고
+      // '정상'으로 둔다. 정차 중 잠깐 눈을 감거나 고개를 숙여도
+      // 경고가 울리지 않게 하기 위함. (출발하면 자동으로 다시 감지)
+      final stationary = _gpsGating &&
+          _speedService != null &&
+          !_speedService!.isMoving;
+      if (stationary) {
+        newState = DriverState.normal;
+      }
 
       // 상태 전환 처리
       //   - 비정상 상태로 진입 → 알림 시작 (사운드 무한반복)
@@ -235,6 +266,7 @@ class _DetectionScreenState extends State<DetectionScreen> {
     _cameraController?.dispose();
     _faceDetector.close();
     _audioPlayer.dispose();
+    _speedService?.stop();
     super.dispose();
   }
 
@@ -254,6 +286,41 @@ class _DetectionScreenState extends State<DetectionScreen> {
       case DriverState.drowsy:    return '⚠ 졸음 감지!';
       case DriverState.collapsed: return '🚨 위험! 쓰러짐 감지';
     }
+  }
+
+  // 실험 기능: GPS 속도/정지 상태 배지
+  //   GPS 못 씀 → 회색 "GPS 없음" (감지는 평소대로 동작)
+  //   정지 중   → 주황 "정지 중 · 감지 일시정지"
+  //   운행 중   → 파랑 "주행 12km/h"
+  Widget _buildGpsBadge() {
+    final svc = _speedService;
+    late final Color color;
+    late final String text;
+    if (svc == null || !svc.available) {
+      color = Colors.grey;
+      text = '📡 GPS 없음';
+    } else if (!svc.isMoving) {
+      color = Colors.orange;
+      text = '⏸ 정지 중 · 감지 일시정지';
+    } else {
+      color = Colors.blue;
+      text = '🚌 주행 ${svc.speedKmh.toStringAsFixed(0)}km/h';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
   }
 
   @override
@@ -322,6 +389,14 @@ class _DetectionScreenState extends State<DetectionScreen> {
               ),
             ),
           ),
+
+          // ── 실험 기능: GPS 속도/정지 배지 ───────────────────────
+          if (_gpsGating)
+            Positioned(
+              left: 16,
+              top: 56,
+              child: _buildGpsBadge(),
+            ),
 
           // ── 하단 큰 상태 라벨 ──────────────────────────────────
           Positioned(

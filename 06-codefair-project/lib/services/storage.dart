@@ -31,6 +31,9 @@ class Storage {
   static const _kThreshold = 'eye_threshold';
   static const _kSoundOn = 'sound_on';
   static const _kHistory = 'history';
+  // ── 실험 기능(experimental-feature) 설정 키 ────────────────────
+  static const _kGpsGating = 'gps_gating';            // GPS 정지 시 감지 끄기
+  static const _kStationarySpeed = 'stationary_speed'; // 정지 판단 속도(km/h)
 
   // ── 설정 ──────────────────────────────────────────────────────
   static Future<double> loadThreshold() async {
@@ -51,6 +54,31 @@ class Storage {
   static Future<void> saveSoundOn(bool v) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kSoundOn, v);
+  }
+
+  // ── 실험 기능: GPS 정지 게이팅 ───────────────────────────────
+  // 켜면 버스가 멈춰 있을 때(정류장·신호 대기) 졸음 경고를 울리지 않는다.
+  // 실험 기능이라 기본값은 꺼짐(false).
+  static Future<bool> loadGpsGating() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_kGpsGating) ?? false;
+  }
+
+  static Future<void> saveGpsGating(bool v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kGpsGating, v);
+  }
+
+  // 이 속도(km/h) 미만이면 '정지'로 본다. 기본 5km/h
+  // (사람 걸음 속도가 약 4~5km/h 이므로 버스가 거의 멈춘 상태를 뜻한다.)
+  static Future<double> loadStationarySpeed() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getDouble(_kStationarySpeed) ?? 5.0;
+  }
+
+  static Future<void> saveStationarySpeed(double v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_kStationarySpeed, v);
   }
 
   // ── 기록 ──────────────────────────────────────────────────────

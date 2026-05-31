@@ -47,5 +47,7 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>운전자의 졸음 상태를 카메라로 분석하기 위해 사용합니다.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>버스가 멈춰 있을 때 졸음 감지를 잠시 끄기 위해 현재 속도를 확인합니다.</string>
 </dict>
 </plist>

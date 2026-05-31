@@ -104,6 +104,20 @@ class DrowsyDetector {
     return (v1 + v2) / (2.0 * horizontal);
   }
 
+  // ── 양쪽 눈 평균 EAR 만 계산 (상태머신 부작용 없음) ────────────
+  // 민감도 자동 보정 화면에서 사용한다.
+  //   - 얼굴/눈 윤곽이 없으면 null 반환 (샘플에서 제외)
+  //   - update() 와 달리 내부 타이머·이전 위치를 건드리지 않는다.
+  double? computeEar(Face? face) {
+    if (face == null) return null;
+    final leftContour  = face.contours[FaceContourType.leftEye]?.points ?? [];
+    final rightContour = face.contours[FaceContourType.rightEye]?.points ?? [];
+    if (leftContour.isEmpty || rightContour.isEmpty) return null;
+    final earL = _calculateEar(leftContour);
+    final earR = _calculateEar(rightContour);
+    return (earL + earR) / 2.0;
+  }
+
   // ── 상태 머신 (파이썬 check_state 와 동일한 로직) ──────────────
   DriverState update(Face? face) {
     final now = DateTime.now();

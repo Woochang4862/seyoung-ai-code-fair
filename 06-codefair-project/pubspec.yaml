@@ -44,6 +44,10 @@ dependencies:
   # ── 공통: 카메라 권한 요청 ────────────────────────────────────
   permission_handler: ^11.4.0
 
+  # ── 실험 기능(experimental-feature): GPS 속도 측정 ───────────
+  # 버스가 멈춰 있을 때는 졸음 경고를 끄기 위해 현재 속도를 읽는다.
+  geolocator: ^13.0.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

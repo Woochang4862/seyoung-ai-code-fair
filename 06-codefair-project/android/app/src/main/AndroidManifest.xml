@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- 마이크 (추후 확장용) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 위치 권한 (실험 기능: GPS 속도로 정지 시 감지 끄기) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- 카메라 하드웨어 필수 선언 -->
     <uses-feature android:name="android.hardware.camera" android:required="true" />
 
