@@ -48,6 +48,10 @@ dependencies:
   # 버스가 멈춰 있을 때는 졸음 경고를 끄기 위해 현재 속도를 읽는다.
   geolocator: ^13.0.2
 
+  # ── 감지 중 화면 꺼짐 방지 ────────────────────────────────────
+  # 운전 중 화면이 꺼지면 졸음 감지가 멈추므로 항상 켜 둔다.
+  wakelock_plus: ^1.2.8
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

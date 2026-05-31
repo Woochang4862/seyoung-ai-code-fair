@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../services/drowsy_detector.dart';
 import '../services/storage.dart';
@@ -35,11 +36,11 @@ class CalibrationScreen extends StatefulWidget {
 
 // 보정 진행 단계
 enum _Phase {
-  intro,           // 시작 안내
-  measuringOpen,   // 눈 뜬 상태 측정
+  intro, // 시작 안내
+  measuringOpen, // 눈 뜬 상태 측정
   measuringClosed, // 눈 감은 상태 측정
-  result,          // 결과 표시
-  failed,          // 실패(권한·측정 부족)
+  result, // 결과 표시
+  failed, // 실패(권한·측정 부족)
 }
 
 class _CalibrationScreenState extends State<CalibrationScreen> {
@@ -61,13 +62,15 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   static const int _bufferSize = 8; // 약 0.3초 분량
   double? _liveEar; // 화면에 보여줄 실시간 EAR (얼굴 없으면 null)
 
-  double _earOpen = 0.0;   // 1단계 결과
+  double _earOpen = 0.0; // 1단계 결과
   double _earClosed = 0.0; // 2단계 결과
-  double _result = 0.25;   // 계산된 임계값
+  double _result = 0.25; // 계산된 임계값
 
   @override
   void initState() {
     super.initState();
+    // 측정 중 화면이 어두워지거나 꺼지지 않게 한다.
+    WakelockPlus.enable();
     _faceDetector = FaceDetector(
       options: FaceDetectorOptions(
         enableContours: true,
@@ -184,7 +187,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     if (_earOpen - _earClosed < 0.05) {
       setState(() {
         _phase = _Phase.failed;
-        _status = '눈 뜸/감음 차이가 너무 작아요.\n'
+        _status =
+            '눈 뜸/감음 차이가 너무 작아요.\n'
             '1단계에선 눈을 크게, 2단계에선 확실히 감고\n'
             '밝은 곳에서 다시 시도해주세요.';
       });
@@ -221,6 +225,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     _cameraController?.stopImageStream();
     _cameraController?.dispose();
     _faceDetector.close();
+    WakelockPlus.disable(); // 보정 화면을 벗어나면 화면 꺼짐 방지 해제
     super.dispose();
   }
 
@@ -294,7 +299,10 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
               right: 12,
               top: 12,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(12),
@@ -323,7 +331,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                           ? '현재 EAR  ${_liveEar!.toStringAsFixed(2)}'
                           : '얼굴을 찾는 중...',
                       style: TextStyle(
-                        color: faceOk ? Colors.lightBlueAccent : Colors.orangeAccent,
+                        color: faceOk
+                            ? Colors.lightBlueAccent
+                            : Colors.orangeAccent,
                         fontSize: 14,
                         fontFamily: 'monospace',
                         fontWeight: FontWeight.bold,
@@ -382,7 +392,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         return _card(
           icon: Icons.face_retouching_natural,
           title: '내 눈에 맞는 민감도 찾기',
-          body: '두 단계로 측정합니다.\n'
+          body:
+              '두 단계로 측정합니다.\n'
               '① 눈을 크게 뜨고 측정\n'
               '② 눈을 감고 측정\n\n'
               '각 단계에서 자세를 잡은 뒤\n버튼(또는 화면)을 직접 눌러 측정합니다.\n'
@@ -398,7 +409,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         return _card(
           icon: Icons.check_circle,
           title: '측정 완료!',
-          body: '뜬 눈 EAR: ${_earOpen.toStringAsFixed(2)}\n'
+          body:
+              '뜬 눈 EAR: ${_earOpen.toStringAsFixed(2)}\n'
               '감은 눈 EAR: ${_earClosed.toStringAsFixed(2)}\n\n'
               '추천 민감도(임계값)\n'
               '➡  ${_result.toStringAsFixed(2)}',
@@ -445,14 +457,17 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
         children: [
           Icon(icon, size: 56, color: Colors.blue),
           const SizedBox(height: 12),
-          Text(title,
-              textAlign: TextAlign.center,
-              style:
-                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 12),
-          Text(body,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[800], fontSize: 15)),
+          Text(
+            body,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey[800], fontSize: 15),
+          ),
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,

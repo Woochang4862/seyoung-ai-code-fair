@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../services/drowsy_detector.dart';
 import '../services/speed_service.dart';
@@ -53,6 +54,9 @@ class _DetectionScreenState extends State<DetectionScreen> {
   @override
   void initState() {
     super.initState();
+    // 감지 화면에 있는 동안 화면이 꺼지지 않게 한다.
+    // (운전 중 화면이 꺼지면 카메라·졸음 감지가 멈추므로)
+    WakelockPlus.enable();
     // ML Kit 얼굴 검출기 초기화
     //   enableContours: 눈 윤곽 16개 점 추출 (EAR 계산용)
     //   enableClassification: 눈 열림 확률·미소 확률 (보조 지표)
@@ -267,6 +271,8 @@ class _DetectionScreenState extends State<DetectionScreen> {
     _faceDetector.close();
     _audioPlayer.dispose();
     _speedService?.stop();
+    // 감지 화면을 벗어나면 화면 꺼짐 방지 해제 (배터리 절약)
+    WakelockPlus.disable();
     super.dispose();
   }
 
