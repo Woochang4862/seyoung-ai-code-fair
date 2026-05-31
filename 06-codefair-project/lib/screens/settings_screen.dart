@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../services/speed_service.dart';
 import '../services/storage.dart';
@@ -21,6 +23,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // GPS 동작 확인용 라이브 속도 측정기 (GPS 토글이 켜져 있을 때만 동작)
   SpeedService? _speedTest;
+  // '마지막 갱신 N초 전'을 1초마다 다시 그리기 위한 타이머.
+  // (새 GPS 신호가 안 와도 경과 시간은 계속 올라가야 하므로 별도 타이머 필요)
+  Timer? _ticker;
 
   @override
   void initState() {
@@ -56,17 +61,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       },
     );
     _speedTest = svc;
+    // 1초마다 화면을 다시 그려 '마지막 갱신 N초 전'을 갱신한다.
+    _ticker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
     await svc.start();
   }
 
   Future<void> _stopSpeedTest() async {
     await _speedTest?.stop();
     _speedTest = null;
+    _ticker?.cancel();
+    _ticker = null;
   }
 
   @override
   void dispose() {
     _speedTest?.stop();
+    _ticker?.cancel();
     super.dispose();
   }
 
@@ -246,6 +258,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
       sub = '정지로 판정 → 감지 일시정지';
     }
 
+    // '마지막 갱신: N초 전' — 지금 값이 살아있는지(신호가 계속 오는지) 확인용.
+    // GPS 는 보통 1초에 한 번 갱신되므로, 숫자가 0~1을 오가면 정상.
+    // 5초 넘게 안 오면 신호가 끊겼을 가능성이 높다.
+    String? freshness;
+    Color freshColor = Colors.grey;
+    if (svc != null && svc.available) {
+      final last = svc.lastUpdate;
+      if (last == null) {
+        freshness = '아직 위치 신호 없음...';
+        freshColor = Colors.orange;
+      } else {
+        final sec = DateTime.now().difference(last).inSeconds;
+        if (sec <= 1) {
+          freshness = '마지막 갱신: 방금 전';
+          freshColor = Colors.green;
+        } else if (sec <= 5) {
+          freshness = '마지막 갱신: $sec초 전';
+          freshColor = Colors.grey;
+        } else {
+          freshness = '마지막 갱신: $sec초 전 (신호 끊김?)';
+          freshColor = Colors.orange;
+        }
+      }
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Container(
@@ -278,6 +315,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(sub, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+                  if (freshness != null) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(Icons.sync, size: 13, color: freshColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          freshness,
+                          style: TextStyle(fontSize: 12, color: freshColor),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

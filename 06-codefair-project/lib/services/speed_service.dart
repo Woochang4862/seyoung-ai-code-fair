@@ -34,6 +34,7 @@ class SpeedService {
   double speedKmh = 0.0;      // 가장 최근 속도(km/h)
   bool available = false;     // GPS 사용 가능(권한 OK·신호 수신) 여부
   String status = 'GPS 준비 중...';
+  DateTime? lastUpdate;       // 마지막으로 위치를 받은 시각 (신호 생존 확인용)
 
   // 속도가 '정지 기준'보다 빠르면 움직이는 중.
   // GPS 를 못 쓰면(available=false) 안전하게 '움직임'으로 본다.
@@ -76,6 +77,7 @@ class SpeedService {
       // position.speed 는 m/s. 음수(미측정)면 0 으로 처리.
       final mps = pos.speed.isNaN || pos.speed < 0 ? 0.0 : pos.speed;
       speedKmh = mps * 3.6;
+      lastUpdate = DateTime.now(); // 방금 신호를 받음
       onUpdate?.call();
     }, onError: (_) {
       available = false;
