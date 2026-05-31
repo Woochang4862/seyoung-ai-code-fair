@@ -37,17 +37,22 @@ class SpeedService {
   // 지수이동평균(EMA)용 — 한 번 튄 값이 그대로 표시되지 않도록 부드럽게.
   double? _smoothedKmh;
 
+  // 정지↔주행 판정에 여유폭(히스테리시스)을 둔다.
+  // 임계값 정확히 한 점에서 켜고 끄면 경계 근처에서 깜빡거리므로,
+  // 한 번 '주행'이 되면 (임계값 - 2km/h) 아래로 떨어져야 '정지'로 바뀐다.
+  static const double _hysteresisKmh = 2.0;
+  bool _moving = false; // 히스테리시스가 적용된 현재 주행 여부
+
   // ── 외부에서 읽는 상태 ────────────────────────────────────────
   double speedKmh = 0.0;      // 가장 최근 속도(km/h, 보정 후)
   bool available = false;     // GPS 사용 가능(권한 OK·신호 수신) 여부
   String status = 'GPS 준비 중...';
   DateTime? lastUpdate;       // 마지막으로 위치를 받은 시각 (신호 생존 확인용)
 
-  // 속도가 '정지 기준'보다 빠르면 움직이는 중.
-  // GPS 를 못 쓰면(available=false) 안전하게 '움직임'으로 본다.
+  // 움직이는 중인지. GPS 를 못 쓰면(available=false) 안전하게 '움직임'으로 본다.
   //   → GPS 고장 때문에 졸음 감지가 통째로 꺼지면 더 위험하므로,
   //     불확실하면 감지는 켜 두는 쪽(움직임)으로 판단한다.
-  bool get isMoving => !available || speedKmh >= stationarySpeedKmh;
+  bool get isMoving => !available || _moving;
 
   // ── 시작 ──────────────────────────────────────────────────────
   Future<void> start() async {
@@ -91,6 +96,15 @@ class SpeedService {
       if (kmh < _noiseFloorKmh) kmh = 0.0;
 
       speedKmh = kmh;
+
+      // (3) 히스테리시스로 정지↔주행 판정 (경계에서 깜빡임 방지)
+      //   주행 진입: 임계값 이상   /   정지 복귀: (임계값 - 2km/h) 이하
+      if (kmh >= stationarySpeedKmh) {
+        _moving = true;
+      } else if (kmh <= stationarySpeedKmh - _hysteresisKmh) {
+        _moving = false;
+      } // 그 사이(여유폭 안)면 직전 상태 유지
+
       lastUpdate = DateTime.now(); // 방금 신호를 받음
       onUpdate?.call();
     }, onError: (_) {
@@ -133,5 +147,6 @@ class SpeedService {
     await _sub?.cancel();
     _sub = null;
     _smoothedKmh = null; // 다음에 다시 시작할 때 평활값 초기화
+    _moving = false;
   }
 }

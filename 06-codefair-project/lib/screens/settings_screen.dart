@@ -236,25 +236,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _buildSpeedTestPanel() {
     final svc = _speedTest;
 
+    final bool hasFix = svc != null && svc.available; // GPS 값이 있는지
+    final double target = hasFix ? svc.speedKmh : 0.0; // 애니메이션 목표 속도
+
     late final Color color;
     late final IconData icon;
-    late final String big;
     late final String sub;
 
-    if (svc == null || !svc.available) {
+    if (!hasFix) {
       color = Colors.grey;
       icon = Icons.gps_off;
-      big = '— km/h';
       sub = svc?.status ?? 'GPS 준비 중...';
     } else if (svc.isMoving) {
       color = Colors.blue;
       icon = Icons.directions_bus;
-      big = '${svc.speedKmh.toStringAsFixed(1)} km/h';
       sub = '주행 중으로 판정 → 졸음 감지 ON';
     } else {
       color = Colors.orange;
       icon = Icons.pause_circle_filled;
-      big = '${svc.speedKmh.toStringAsFixed(1)} km/h';
       sub = '정지로 판정 → 감지 일시정지';
     }
 
@@ -305,14 +304,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    big,
-                    style: TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: color,
-                    ),
-                  ),
+                  // GPS 는 1초에 한 번 값을 주는데, 숫자가 툭 점프하면 버벅여 보인다.
+                  // 새 값으로 0.7초에 걸쳐 부드럽게 미끄러지도록 애니메이션.
+                  hasFix
+                      ? TweenAnimationBuilder<double>(
+                          tween: Tween<double>(end: target),
+                          duration: const Duration(milliseconds: 700),
+                          curve: Curves.easeOut,
+                          builder: (_, value, _) => Text(
+                            '${value.toStringAsFixed(1)} km/h',
+                            style: TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.bold,
+                              color: color,
+                            ),
+                          ),
+                        )
+                      : Text(
+                          '— km/h',
+                          style: TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                            color: color,
+                          ),
+                        ),
                   const SizedBox(height: 2),
                   Text(sub, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
                   if (freshness != null) ...[
