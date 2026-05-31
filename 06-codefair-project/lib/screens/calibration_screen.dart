@@ -15,11 +15,17 @@ import '../utils/face_image_converter.dart';
 // 고정값 0.25 는 어떤 사람에겐 너무 둔감하고, 어떤 사람에겐 너무 예민하다.
 //
 // 이 화면은 카메라로 직접 그 사람의 눈을 측정해서 가장 알맞은 임계값을 찾는다:
-//   1단계) 눈을 "크게 뜨고" 정면을 본다  → 뜬 눈 EAR 평균(earOpen)
-//   2단계) 눈을 "감는다"               → 감은 눈 EAR 평균(earClosed)
+//   1단계) 눈을 "크게 뜨고" 정면을 본다  → 뜬 눈 EAR(earOpen)
+//   2단계) 눈을 "감는다"               → 감은 눈 EAR(earClosed)
 //   결과)  두 값의 중간을 임계값으로 삼는다
 //          threshold = (earOpen + earClosed) / 2
 //        → 이 사람 기준으로 '딱 절반쯤 감았을 때'를 경계선으로 잡는 셈.
+//
+// [측정 방식 — 수동]
+//   카메라가 가려지지 않게 화면을 띄워 두고, 자세를 잡은 다음
+//   "측정하기" 버튼(또는 화면 아무 곳이나 탭)을 누르면 그 순간의 EAR 을 잡는다.
+//   값이 흔들리지 않도록 직전 몇 프레임의 평균을 쓴다.
+//   → 눈을 감은 상태(2단계)에서도 화면 아무 데나 톡 누르면 측정된다.
 class CalibrationScreen extends StatefulWidget {
   const CalibrationScreen({super.key});
 
@@ -29,11 +35,11 @@ class CalibrationScreen extends StatefulWidget {
 
 // 보정 진행 단계
 enum _Phase {
-  intro,         // 시작 안내
-  measuringOpen, // 눈 뜬 상태 측정 중
-  measuringClosed, // 눈 감은 상태 측정 중
-  result,        // 결과 표시
-  failed,        // 실패(권한·측정 부족)
+  intro,           // 시작 안내
+  measuringOpen,   // 눈 뜬 상태 측정
+  measuringClosed, // 눈 감은 상태 측정
+  result,          // 결과 표시
+  failed,          // 실패(권한·측정 부족)
 }
 
 class _CalibrationScreenState extends State<CalibrationScreen> {
@@ -49,9 +55,11 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   _Phase _phase = _Phase.intro;
   String _status = '카메라 준비 중...';
 
-  // 한 단계당 모을 EAR 샘플 (측정 중에만 채워짐)
-  final List<double> _samples = [];
-  static const int _samplesNeeded = 30; // 약 1~2초 분량
+  // 직전 몇 프레임의 EAR 을 모아 두는 짧은 버퍼.
+  // 탭하는 순간 이 값들의 평균을 측정값으로 쓴다(값 떨림 방지).
+  final List<double> _recentEars = [];
+  static const int _bufferSize = 8; // 약 0.3초 분량
+  double? _liveEar; // 화면에 보여줄 실시간 EAR (얼굴 없으면 null)
 
   double _earOpen = 0.0;   // 1단계 결과
   double _earClosed = 0.0; // 2단계 결과
@@ -110,7 +118,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     await _cameraController!.startImageStream(_onFrame);
   }
 
-  // 매 프레임 EAR 계산 — 측정 중인 단계에서만 샘플을 모은다.
+  // 매 프레임 EAR 계산 — 측정 단계에서 실시간 값/버퍼만 갱신한다.
+  // (자동으로 넘어가지 않는다. 사용자가 탭할 때만 측정 확정.)
   Future<void> _onFrame(CameraImage image) async {
     if (_isProcessing) return;
     if (_phase != _Phase.measuringOpen && _phase != _Phase.measuringClosed) {
@@ -123,13 +132,16 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       final faces = await _faceDetector.processImage(input);
       final face = faces.isEmpty ? null : faces.first;
       final ear = _detector.computeEar(face);
-      if (ear == null) return; // 얼굴/눈을 못 찾은 프레임은 건너뜀
 
-      _samples.add(ear);
-      if (mounted) setState(() {}); // 진행률 갱신
-      if (_samples.length >= _samplesNeeded) {
-        _finishCurrentPhase();
+      if (ear == null) {
+        // 얼굴/눈을 못 찾은 프레임 → 실시간 표시만 비우고 버퍼는 유지
+        if (mounted) setState(() => _liveEar = null);
+        return;
       }
+
+      _recentEars.add(ear);
+      if (_recentEars.length > _bufferSize) _recentEars.removeAt(0);
+      if (mounted) setState(() => _liveEar = ear);
     } catch (_) {
       // 한 프레임 실패는 무시
     } finally {
@@ -137,28 +149,44 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     }
   }
 
-  // 모은 샘플의 평균을 구해 현재 단계를 마무리한다.
-  void _finishCurrentPhase() {
-    final avg = _samples.reduce((a, b) => a + b) / _samples.length;
+  // 탭/버튼 → 지금 버퍼의 평균을 이 단계 측정값으로 확정한다.
+  void _capture() {
+    if (_phase != _Phase.measuringOpen && _phase != _Phase.measuringClosed) {
+      return;
+    }
+    // 최소 몇 프레임은 모여 있어야 한다 (얼굴이 안 잡히면 막음)
+    if (_recentEars.length < 3) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('얼굴이 잘 안 보여요. 카메라에 얼굴을 맞추고 다시 눌러주세요.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    final avg = _recentEars.reduce((a, b) => a + b) / _recentEars.length;
+
     if (_phase == _Phase.measuringOpen) {
       _earOpen = avg;
-      _samples.clear();
+      _recentEars.clear(); // 다음 단계(눈 감기)를 위해 버퍼 비움
       setState(() => _phase = _Phase.measuringClosed);
-    } else if (_phase == _Phase.measuringClosed) {
+    } else {
       _earClosed = avg;
-      _samples.clear();
+      _recentEars.clear();
       _computeResult();
     }
   }
 
-  // 뜬 눈/감은 눈 평균으로 임계값을 계산한다.
+  // 뜬 눈/감은 눈 측정값으로 임계값을 계산한다.
   void _computeResult() {
     // 뜬 눈이 감은 눈보다 충분히 커야 측정이 믿을 만하다.
     // 차이가 너무 작으면(0.05 미만) 측정이 잘못된 것 → 다시 하도록 안내.
     if (_earOpen - _earClosed < 0.05) {
       setState(() {
         _phase = _Phase.failed;
-        _status = '눈 뜸/감음 차이가 너무 작아요.\n밝은 곳에서 다시 시도해주세요.';
+        _status = '눈 뜸/감음 차이가 너무 작아요.\n'
+            '1단계에선 눈을 크게, 2단계에선 확실히 감고\n'
+            '밝은 곳에서 다시 시도해주세요.';
       });
       return;
     }
@@ -179,10 +207,11 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
   // 처음부터 다시
   void _restart() {
-    _samples.clear();
+    _recentEars.clear();
     setState(() {
       _earOpen = 0.0;
       _earClosed = 0.0;
+      _liveEar = null;
       _phase = _Phase.intro;
     });
   }
@@ -196,6 +225,9 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
   }
 
   // ── UI ──────────────────────────────────────────────────────────
+  bool get _isMeasuring =>
+      _phase == _Phase.measuringOpen || _phase == _Phase.measuringClosed;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -206,7 +238,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       ),
       body: Stack(
         children: [
-          // 카메라 미리보기
+          // 카메라 미리보기 (항상 깔려 있음)
           Positioned.fill(
             child: _isCameraReady && _cameraController != null
                 ? Center(
@@ -227,44 +259,139 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
                   ),
           ),
 
-          // 어둡게 깔고 안내 카드 표시
-          Positioned.fill(
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.45),
-              alignment: Alignment.center,
-              padding: const EdgeInsets.all(24),
-              child: _buildOverlay(),
+          // 측정 단계: 카메라를 가리지 않는 얇은 안내 바 + 측정 버튼
+          if (_isMeasuring) _buildMeasuringLayer(),
+
+          // 그 외 단계(안내/결과/실패): 어둡게 깔고 카드 표시
+          if (!_isMeasuring)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.45),
+                alignment: Alignment.center,
+                padding: const EdgeInsets.all(24),
+                child: _buildCard(),
+              ),
             ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildOverlay() {
+  // 측정 중 레이어 — 카메라가 보이도록 위/아래에만 반투명 바를 둔다.
+  // 화면 전체가 탭 영역이라, 눈을 감은 상태에서도 아무 데나 누르면 측정된다.
+  Widget _buildMeasuringLayer() {
+    final isOpenPhase = _phase == _Phase.measuringOpen;
+    final faceOk = _liveEar != null;
+    return Positioned.fill(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque, // 빈 곳 탭도 받기
+        onTap: _capture,
+        child: Stack(
+          children: [
+            // 상단 안내 바
+            Positioned(
+              left: 12,
+              right: 12,
+              top: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isOpenPhase ? '① 눈을 크게 뜨세요' : '② 눈을 감으세요',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      isOpenPhase
+                          ? '정면을 보고 눈을 크게 뜬 뒤 아래 버튼을 누르세요'
+                          : '눈을 감고 화면 아무 곳이나 톡 누르세요',
+                      style: TextStyle(color: Colors.grey[300], fontSize: 13),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      faceOk
+                          ? '현재 EAR  ${_liveEar!.toStringAsFixed(2)}'
+                          : '얼굴을 찾는 중...',
+                      style: TextStyle(
+                        color: faceOk ? Colors.lightBlueAccent : Colors.orangeAccent,
+                        fontSize: 14,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // 하단 측정 버튼 + 안내
+            Positioned(
+              left: 24,
+              right: 24,
+              bottom: 28,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    height: 58,
+                    child: ElevatedButton.icon(
+                      onPressed: _capture,
+                      icon: const Icon(Icons.center_focus_strong),
+                      label: Text(
+                        isOpenPhase ? '뜬 눈 측정하기' : '감은 눈 측정하기',
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '버튼 또는 화면 아무 곳이나 누르면 측정됩니다',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 안내/결과/실패 카드
+  Widget _buildCard() {
     switch (_phase) {
       case _Phase.intro:
         return _card(
           icon: Icons.face_retouching_natural,
           title: '내 눈에 맞는 민감도 찾기',
           body: '두 단계로 측정합니다.\n'
-              '① 눈을 크게 뜨고 정면 보기\n'
-              '② 눈을 감기\n\n'
-              '얼굴이 화면에 잘 보이는 밝은 곳에서 진행하세요.',
+              '① 눈을 크게 뜨고 측정\n'
+              '② 눈을 감고 측정\n\n'
+              '각 단계에서 자세를 잡은 뒤\n버튼(또는 화면)을 직접 눌러 측정합니다.\n'
+              '밝은 곳에서 진행하세요.',
           buttonLabel: '시작',
-          onPressed: () => setState(() => _phase = _Phase.measuringOpen),
-        );
-
-      case _Phase.measuringOpen:
-        return _measuringCard(
-          title: '① 눈을 크게 뜨세요',
-          hint: '정면을 보고 눈을 크게 뜬 채 기다리세요',
-        );
-
-      case _Phase.measuringClosed:
-        return _measuringCard(
-          title: '② 눈을 감으세요',
-          hint: '편하게 눈을 감고 기다리세요',
+          onPressed: () {
+            _recentEars.clear();
+            setState(() => _phase = _Phase.measuringOpen);
+          },
         );
 
       case _Phase.result:
@@ -289,36 +416,12 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
           buttonLabel: '다시 시도',
           onPressed: _restart,
         );
-    }
-  }
 
-  // 측정 중 카드 (진행률 표시)
-  Widget _measuringCard({required String title, required String hint}) {
-    final progress = (_samples.length / _samplesNeeded).clamp(0.0, 1.0);
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          Text(hint,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[700])),
-          const SizedBox(height: 20),
-          LinearProgressIndicator(value: progress),
-          const SizedBox(height: 8),
-          Text('${(progress * 100).toInt()}%  측정 중...',
-              style: TextStyle(color: Colors.grey[600], fontSize: 13)),
-        ],
-      ),
-    );
+      // 측정 단계는 카드가 아니라 _buildMeasuringLayer 가 담당
+      case _Phase.measuringOpen:
+      case _Phase.measuringClosed:
+        return const SizedBox.shrink();
+    }
   }
 
   // 안내/결과 카드 (버튼 1~2개)
