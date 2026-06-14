@@ -11,7 +11,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="true" />
 
     <application
-        android:label="codefair_project"
+        android:label="Sleepless"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

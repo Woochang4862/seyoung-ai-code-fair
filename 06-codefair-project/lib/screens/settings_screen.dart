@@ -221,7 +221,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),
-            title: Text('안전 운전 도우미'),
+            title: Text('Sleepless'),
             subtitle: Text('버전 1.0.0 · 한국코드페어 출품작'),
           ),
         ],

@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'screens/home_screen.dart';
 
 void main() {
-  runApp(const SafeDriverApp());
+  runApp(const SleeplessApp());
 }
 
-class SafeDriverApp extends StatelessWidget {
-  const SafeDriverApp({super.key});
+class SleeplessApp extends StatelessWidget {
+  const SleeplessApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '안전 운전 도우미',
+      title: 'Sleepless',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
